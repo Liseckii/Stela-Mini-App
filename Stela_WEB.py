@@ -70,5 +70,6 @@ def main(page: ft.Page):
         ft.FloatingActionButton(icon=ft.icons.MIC, on_click=start_mic, bgcolor=ft.colors.BLUE_700),
     )
 
-# Запуск в режиме веб-сервера
-ft.app(target=main, view=ft.AppView.WEB_BROWSER, port=8550, host="0.0.0.0")
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 8550))
+    ft.app(target=main, view=ft.AppView.WEB_BROWSER, port=port, host="0.0.0.0")
