@@ -24,7 +24,7 @@ class StelaWeb:
             return "Привет! Я Стела, твой мобильный ассистент."
         elif "время" in text:
             return f"Сейчас {time.strftime('%H:%M')}"
-        return "Я пока не знаю такую команду, но я учусь!"
+        return f"Вы сказали: {text}. Я пока учусь выполнять эту команду!"
 
 def main(page: ft.Page):
     page.title = "Stela AI Web"
@@ -38,28 +38,40 @@ def main(page: ft.Page):
     status = ft.Text("Нажми на микрофон", size=16, italic=True)
     chat_display = ft.Text("Готова к работе", size=20, weight="bold", text_align="center")
     
-    # Функция озвучки (через браузер)
-    tts = ft.TextToSpeech()
+    # Исправленный вызов TTS
+    def on_tts_error(e):
+        print(f"TTS Error: {e.data}")
+
+    # В новых версиях Flet используем встроенные свойства через overlay
+    tts = ft.TextToSpeech(on_error=on_tts_error)
     page.overlay.append(tts)
 
-    def on_result(e):
+    def on_speech_result(e):
         if e.data:
             user_text = e.data
             chat_display.value = f"Вы: {user_text}"
             response = stela.get_response(user_text)
             
-            # Ответ Стелы
-            time.sleep(0.5)
             chat_display.value = f"Стела: {response}"
+            status.value = "Слушаю..."
+            page.update()
+            
+            # Озвучка
             tts.speak(response)
             page.update()
 
-    stt = ft.SpeechToText(on_result=on_result)
+    # Исправленный вызов STT
+    stt = ft.SpeechToText(on_result=on_speech_result)
     page.overlay.append(stt)
 
     def start_mic(e):
-        stt.start()
-        status.value = "Слушаю..."
+        # Простая проверка доступности
+        try:
+            stt.start()
+            status.value = "Слушаю..."
+        except Exception as ex:
+            status.value = "Ошибка микрофона"
+            print(ex)
         page.update()
 
     page.add(
@@ -68,11 +80,14 @@ def main(page: ft.Page):
         ft.Container(height=20),
         chat_display,
         status,
-        ft.FloatingActionButton(icon=ft.icons.MIC, on_click=start_mic, bgcolor=ft.colors.BLUE_700),
+        ft.FloatingActionButton(
+            icon=ft.icons.MIC, 
+            on_click=start_mic, 
+            bgcolor=ft.colors.BLUE_700
+        ),
     )
 
 if __name__ == "__main__":
-    # Явно указываем порт для Render
+    # Явное приведение порта к int для стабильности
     port = int(os.environ.get("PORT", 8550))
-    # Запускаем БЕЗ лишних команд, напрямую
     ft.app(target=main, view=ft.AppView.WEB_BROWSER, port=port, host="0.0.0.0")
