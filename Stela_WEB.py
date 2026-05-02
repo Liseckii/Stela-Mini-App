@@ -1,6 +1,7 @@
 import flet as ft
 from yandex_music import Client
 import time
+import os
 
 # === НАСТРОЙКИ ===
 TOKEN = 'y0__wgBELW5t-AIGN74BiDVoJKcFz_L8KNOw89vNCFujalfXUGXkQLI'
@@ -71,5 +72,7 @@ def main(page: ft.Page):
     )
 
 if __name__ == "__main__":
+    # Явно указываем порт для Render
     port = int(os.environ.get("PORT", 8550))
+    # Запускаем БЕЗ лишних команд, напрямую
     ft.app(target=main, view=ft.AppView.WEB_BROWSER, port=port, host="0.0.0.0")
