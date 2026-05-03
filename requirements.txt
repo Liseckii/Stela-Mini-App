@@ -3,3 +3,5 @@ aiogram
 groq
 python-dotenv
 uvicorn
+yandex-music
+static-ffmpeg
