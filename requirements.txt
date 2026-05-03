@@ -1,10 +1,8 @@
+flet>=0.21.0
+flet-fastapi
 aiogram
-yandex-music
 groq
-speechrecognition
-pydub
-fastapi
-uvicorn
-jinja2
-python-multipart
 python-dotenv
+uvicorn
+fastapi
+yandex-music
