@@ -1,5 +1,9 @@
 flet>=0.21.0
-yandex-music
 aiogram
-flet-desktop
 yandex-music
+groq
+speechrecognition
+pydub
+fastapi
+uvicorn
+python-dotenv
