@@ -24,13 +24,17 @@ bot = Bot(token=TELEGRAM_TOKEN) if TELEGRAM_TOKEN else None
 dp = Dispatcher()
 
 async def get_stela_answer(prompt):
-    if not ai_client: return "Ключ ИИ не настроен."
-    loop = asyncio.get_event_loop()
-    def sync_ai():
+    if not ai_client: return "Ключ ИИ не найден"
+    try:
+        # Прямой вызов без экзекутора для проверки
         completion = ai_client.chat.completions.create(
             model="llama-3.1-8b-instant",
-            messages=[{"role": "system", "content": "Ты Стела. Если просят музыку - отвечай 'Ищу трек: [название]'."}, 
-                      {"role": "user", "content": prompt}],
+            messages=[{"role": "user", "content": prompt}],
+        )
+        return completion.choices.message.content
+    except Exception as e:
+        return f"Ошибка: {e}"
+
         )
         return completion.choices.message.content
     return await loop.run_in_executor(None, sync_ai)
