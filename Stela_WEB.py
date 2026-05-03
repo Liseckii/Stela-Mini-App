@@ -9,7 +9,6 @@ from aiogram.types import WebAppInfo, InlineKeyboardMarkup, InlineKeyboardButton
 from groq import Groq
 from yandex_music import Client
 
-# 1. НАСТРОЙКИ
 load_dotenv()
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
@@ -24,119 +23,142 @@ y_client = Client(YANDEX_TOKEN).init() if YANDEX_TOKEN else None
 bot = Bot(token=TELEGRAM_TOKEN) if TELEGRAM_TOKEN else None
 dp = Dispatcher()
 
-# --- ЛОГИКА МОЗГА СТЕЛЫ ---
+# --- МОЗГ СТЕЛЫ ---
 async def get_stela_logic(prompt):
-    if not ai_client: return "Ошибка: Ключи не настроены."
-    
+    if not ai_client: return "Ключи не настроены."
     def sync_ai():
         try:
-            # Даем ИИ инструкцию, как вызывать музыку
             system_prompt = (
-                "Ты — Стела. Если пользователь просит музыку, начни ответ с 'MUSIC_QUERY: ' "
-                "и напиши только название трека и исполнителя. В остальных случаях просто отвечай остроумно."
+                "Ты — Стела, продвинутый ИИ-ассистент. Если тебя просят включить музыку, "
+                "ответь строго по шаблону: [MUSIC] Исполнитель - Трек. "
+                "В остальных случаях отвечай кратко, мудро и с характером."
             )
             completion = ai_client.chat.completions.create(
                 model="llama-3.1-8b-instant",
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": prompt}
-                ]
+                messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": prompt}]
             )
             return completion.choices[0].message.content
-        except Exception as e:
-            return f"Ошибка ИИ: {str(e)}"
+        except: return "Произошел сбой в нейронных связях."
+    return await asyncio.get_event_loop().run_in_executor(None, sync_ai)
 
-    loop = asyncio.get_event_loop()
-    return await loop.run_in_executor(None, sync_ai)
-
-# --- ИНТЕРФЕЙС MINI APP ---
+# --- ИНТЕРФЕЙС (FULL TUNING) ---
 async def main_flet(page: ft.Page):
-    page.title = "Стела ИИ"
+    page.title = "Stela OS"
     page.theme_mode = ft.ThemeMode.DARK
-    page.bgcolor = "#0a0a0a"
+    page.bgcolor = "#000000"
+    page.padding = 20
     page.vertical_alignment = "center"
     page.horizontal_alignment = "center"
 
-    # Визуальный элемент (Сфера / Обложка)
-    sphere_content = ft.Icon(ft.icons.AUTO_AWESOME, size=60, color="cyan200")
+    # Аудио-плеер
+    audio_player = ft.Audio(src="", autoplay=True)
+    page.overlay.append(audio_player)
+
+    # Визуальный центр (Сфера)
+    sphere_icon = ft.Icon(ft.icons.AUTO_AWESOME, size=60, color="cyan200", animate_rotation=300)
     sphere = ft.Container(
-        content=sphere_content,
-        width=200, height=200, shape="circle",
-        gradient=ft.RadialGradient(colors=["blue900", "black"]),
-        shadow=ft.BoxShadow(blur_radius=50, color="blue700"),
-        animate=ft.animation.Animation(600, ft.AnimationCurve.EASE_OUT),
+        content=sphere_icon,
+        width=180, height=180, shape="circle",
+        gradient=ft.RadialGradient(colors=["#1a237e", "black"]),
+        shadow=ft.BoxShadow(blur_radius=60, color="blue900", spread_radius=1),
         animate_scale=400,
+        animate=ft.animation.Animation(1000, ft.AnimationCurve.EASE_IN_OUT),
     )
 
-    status = ft.Text("Стела готова к приключениям", size=16, text_align="center", color="cyan100")
-    input_f = ft.TextField(label="Напиши или попроси музыку...", width=300, border_radius=15)
+    # Зона текста с прокруткой (Стеклянный эффект)
+    status_text = ft.Text("СИСТЕМА ГОТОВА", size=14, color="cyan100", text_align="center")
+    response_area = ft.Container(
+        content=ft.Column(
+            [status_text], 
+            scroll=ft.ScrollMode.ADAPTIVE, 
+            horizontal_alignment="center",
+            spacing=10
+        ),
+        padding=15,
+        width=320,
+        height=180,
+        border_radius=20,
+        bgcolor=ft.colors.with_opacity(0.1, "white"),
+        border=ft.border.all(1, ft.colors.with_opacity(0.2, "white")),
+    )
+
+    # Поле ввода
+    input_f = ft.TextField(
+        label="Запрос к Stela OS...",
+        width=300,
+        border_radius=15,
+        border_color="blue900",
+        focused_border_color="cyan400",
+        on_submit=lambda _: handle_action(None)
+    )
 
     async def handle_action(e):
         if not input_f.value: return
         
-        user_text = input_f.value
+        prompt = input_f.value
         input_f.value = ""
-        status.value = "Стела размышляет..."
-        sphere.scale = 1.2
+        status_text.value = "АНАЛИЗ ЗАПРОСА..."
+        sphere.scale = 1.15
+        sphere.shadow.color = "cyan700"
         page.update()
 
-        ai_response = await get_stela_logic(user_text)
+        ai_res = await get_stela_logic(prompt)
 
-        # ПРОВЕРКА: Музыка или Текст?
-        if "MUSIC_QUERY:" in ai_response and y_client:
-            query = ai_response.replace("MUSIC_QUERY:", "").strip()
+        # ЛОГИКА МУЗЫКИ
+        if "[MUSIC]" in ai_res and y_client:
+            query = ai_res.replace("[MUSIC]", "").strip()
             search = y_client.search(query)
-            
             if search.tracks and search.tracks.results:
                 track = search.tracks.results[0]
-                status.value = f"Включаю: {track.title}\n{track.artists[0].name}"
+                status_text.value = f"PLAYING:\n{track.title}\n{track.artists[0].name}"
                 
-                # Загружаем обложку
+                # Обложка
                 if track.cover_uri:
-                    cover_url = f"https://{track.cover_uri.replace('%%', '200x200')}"
-                    sphere.content = ft.Image(src=cover_url, border_radius=100, fit="cover")
+                    img_url = f"https://{track.cover_uri.replace('%%', '400x400')}"
+                    sphere.content = ft.Image(src=img_url, border_radius=90, fit="cover")
                 
-                # Озвучиваем статус
-                if page.tts: page.tts.say(f"Нашла для тебя {track.title}")
+                # Поток
+                try:
+                    info = track.get_download_info(get_direct_links=True)
+                    audio_player.src = info[0].direct_link
+                    audio_player.play()
+                except: status_text.value = "ОШИБКА ПОТОКА"
             else:
-                status.value = f"Я искала {query}, но ничего не нашла..."
-                if page.tts: page.tts.say("Прости, музыку не нашла.")
+                status_text.value = "ТРЕК НЕ НАЙДЕН В БАЗЕ"
         else:
-            # Обычный ответ
-            status.value = ai_response
+            # Обычный разговор
+            status_text.value = ai_res
             sphere.content = ft.Icon(ft.icons.AUTO_AWESOME, size=60, color="cyan200")
-            if page.tts: 
-                await page.tts.say_async(ai_response)
+            if page.tts: page.tts.say(ai_res)
 
         sphere.scale = 1.0
+        sphere.shadow.color = "blue900"
         page.update()
 
     page.add(
         sphere,
         ft.Container(height=30),
-        status,
+        response_area,
         ft.Container(height=20),
         input_f,
-        ft.ElevatedButton("Спросить / Включить", on_click=handle_action, bgcolor="blue800", color="white")
+        ft.ElevatedButton(
+            "ВЫПОЛНИТЬ", 
+            on_click=handle_action,
+            style=ft.ButtonStyle(bgcolor="blue900", color="white", shape=ft.RoundedRectangleBorder(radius=10))
+        )
     )
 
-# --- ТЕЛЕГРАМ БОТ ---
+# --- BOT LAUNCH ---
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message):
     markup = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="Призвать Стелу 🎙", web_app=WebAppInfo(url=RENDER_URL))]
+        [InlineKeyboardButton(text="STELA OS [LAUNCH]", web_app=WebAppInfo(url=RENDER_URL))]
     ])
-    await message.answer("Я готова. Могу поболтать или найти музыку. Жми!", reply_markup=markup)
+    await message.answer("Stela OS инициализирована. Ожидаю команд.", reply_markup=markup)
 
-# --- ЗАПУСК ---
 async def start_all():
     if bot: asyncio.create_task(dp.start_polling(bot))
-    await ft.app_async(
-        target=main_flet,
-        view=ft.AppView.WEB_BROWSER,
-        port=int(os.getenv("PORT", 10000)),
-        host="0.0.0.0"
-    )
+    await ft.app_async(target=main_flet, view=ft.AppView.WEB_BROWSER, port=int(os.getenv("PORT", 10000)), host="0.0.0.0")
 
 if __name__ == "__main__":
     asyncio.run(start_all())
