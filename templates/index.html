@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Stela Mini App</title>
+    <script src="https://telegram.org"></script>
+    <style>
+        body { background: #000; color: white; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; font-family: sans-serif; }
+        #stela-sphere { width: 150px; height: 150px; background: radial-gradient(circle, #00d2ff, #3a7bd5); border-radius: 50%; box-shadow: 0 0 50px #3a7bd5; transition: 0.3s; }
+        .recording { transform: scale(1.2); box-shadow: 0 0 80px #ff00c1; }
+    </style>
+</head>
+<body>
+    <div id="stela-sphere"></div>
+    <h2 id="status">Нажми, чтобы сказать</h2>
+
+    <script>
+        const sphere = document.getElementById('stela-sphere');
+        const status = document.getElementById('status');
+        let isRecording = false;
+
+        // Инициализация Telegram Web App
+        const tg = window.Telegram.WebApp;
+        tg.expand(); // Развернуть на весь экран
+
+        sphere.onclick = async () => {
+            if (!isRecording) {
+                try {
+                    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                    startRecording(stream);
+                } catch (err) {
+                    alert("Нужен доступ к микрофону!");
+                }
+            }
+        };
+
+        function startRecording(stream) {
+            isRecording = true;
+            sphere.classList.add('recording');
+            status.innerText = "Стела слушает...";
+            
+            // Тут будет логика отправки аудио на твой сервер
+            // После окончания записи:
+            // sphere.classList.remove('recording');
+        }
+    </script>
+</body>
+</html>
