@@ -1,93 +1,56 @@
-import flet as ft
-from yandex_music import Client
-import time
 import os
+import asyncio
+from dotenv import load_dotenv
+from fastapi import FastAPI, Request, UploadFile, File
+from fastapi.templating import Jinja2Templates
+from aiogram import Bot, Dispatcher, types, F
+from aiogram.filters import Command
+from aiogram.types import WebAppInfo, InlineKeyboardMarkup, InlineKeyboardButton
 
-# === НАСТРОЙКИ ===
-TOKEN = 'y0__wgBELW5t-AIGN74BiDVoJKcFz_L8KNOw89vNCFujalfXUGXkQLI'
+load_dotenv()
 
-class StelaWeb:
-    def __init__(self):
-        try:
-            self.client = Client(TOKEN).init()
-            print("Яндекс.Музыка подключена")
-        except:
-            self.client = None
-            print("Ошибка токена")
+# Инициализация
+app = FastAPI()
+templates = Jinja2Templates(directory="templates")
+bot = Bot(token=os.getenv('TELEGRAM_TOKEN'))
+dp = Dispatcher()
 
-    def get_response(self, text):
-        text = text.lower()
-        if "включи" in text:
-            query = text.replace("включи", "").strip()
-            return f"Ищу трек: {query}"
-        elif "привет" in text:
-            return "Привет! Я Стела, твой мобильный ассистент."
-        elif "время" in text:
-            return f"Сейчас {time.strftime('%H:%M')}"
-        return f"Вы сказали: {text}. Я пока учусь выполнять эту команду!"
+# --- ЛОГИКА WEB-ИНТЕРФЕЙСА ---
 
-def main(page: ft.Page):
-    page.title = "Stela AI Web"
-    page.theme_mode = ft.ThemeMode.DARK
-    page.vertical_alignment = ft.MainAxisAlignment.CENTER
-    page.horizontal_alignment = ft.CrossAxisAlignment.CENTER
+@app.get("/")
+async def serve_home(request: Request):
+    # Отдает твою сферу из index.html
+    return templates.TemplateResponse("index.html", {"request": request})
+
+@app.post("/process_audio")
+async def process_audio(audio: UploadFile = File(...)):
+    # Сюда прилетит звук из Mini App
+    with open("voice_from_app.wav", "wb") as f:
+        f.write(await audio.read())
+    # Тут вызывай распознавание и ответ AI
+    return {"status": "ok"}
+
+# --- ЛОГИКА БОТА ---
+
+@dp.message(Command("start"))
+async def cmd_start(message: types.Message):
+    # ЗАМЕНИ НА СВОЙ URL ПОСЛЕ ДЕПЛОЯ
+    web_app_url = "https://onrender.com" 
     
-    stela = StelaWeb()
-    
-    # Элементы интерфейса
-    status = ft.Text("Нажми на микрофон", size=16, italic=True)
-    chat_display = ft.Text("Готова к работе", size=20, weight="bold", text_align="center")
-    
-    # Исправленный вызов TTS
-    def on_tts_error(e):
-        print(f"TTS Error: {e.data}")
+    markup = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="Призвать Стелу 🎙", web_app=WebAppInfo(url=web_app_url))]
+    ])
+    await message.answer("Я готова! Нажми на сферу.", reply_markup=markup)
 
-    # В новых версиях Flet используем встроенные свойства через overlay
-    tts = ft.TextToSpeech(on_error=on_tts_error)
-    page.overlay.append(tts)
+# --- ЗАПУСК ---
 
-    def on_speech_result(e):
-        if e.data:
-            user_text = e.data
-            chat_display.value = f"Вы: {user_text}"
-            response = stela.get_response(user_text)
-            
-            chat_display.value = f"Стела: {response}"
-            status.value = "Слушаю..."
-            page.update()
-            
-            # Озвучка
-            tts.speak(response)
-            page.update()
-
-    # Исправленный вызов STT
-    stt = ft.SpeechToText(on_result=on_speech_result)
-    page.overlay.append(stt)
-
-    def start_mic(e):
-        # Простая проверка доступности
-        try:
-            stt.start()
-            status.value = "Слушаю..."
-        except Exception as ex:
-            status.value = "Ошибка микрофона"
-            print(ex)
-        page.update()
-
-    page.add(
-        ft.Icon(ft.icons.AUTO_AWESOME, size=80, color=ft.colors.BLUE_400),
-        ft.Text("СТЕЛА AI", size=40, weight="bold"),
-        ft.Container(height=20),
-        chat_display,
-        status,
-        ft.FloatingActionButton(
-            icon=ft.icons.MIC, 
-            on_click=start_mic, 
-            bgcolor=ft.colors.BLUE_700
-        ),
-    )
+async def run_bot():
+    await dp.start_polling(bot)
 
 if __name__ == "__main__":
-    # Явное приведение порта к int для стабильности
-    port = int(os.environ.get("PORT", 8550))
-    ft.app(target=main, view=ft.AppView.WEB_BROWSER, port=port, host="0.0.0.0")
+    import uvicorn
+    # Запускаем бота в отдельном потоке
+    loop = asyncio.get_event_loop()
+    loop.create_task(run_bot())
+    # Запускаем веб-сервер
+    uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("PORT", 10000)))
