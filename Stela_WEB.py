@@ -3,7 +3,7 @@ import asyncio
 import logging
 from dotenv import load_dotenv
 
-# Веб-сервер и интерфейс
+# Веб-интерфейс
 import flet as ft
 import flet_fastapi
 from fastapi import FastAPI
@@ -18,11 +18,12 @@ from groq import Groq
 load_dotenv()
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
-RENDER_URL = "https://onrender.com" # Убедись, что это твой адрес на Render
+# ВАЖНО: Проверь, чтобы этот URL совпадал с твоим на Render!
+RENDER_URL = "https://onrender.com" 
 
 logging.basicConfig(level=logging.INFO)
 
-# Инициализация (с проверкой на наличие ключей)
+# Инициализация объектов
 ai_client = Groq(api_key=GROQ_API_KEY) if GROQ_API_KEY else None
 bot = Bot(token=TELEGRAM_TOKEN) if TELEGRAM_TOKEN else None
 dp = Dispatcher()
@@ -30,14 +31,14 @@ dp = Dispatcher()
 # --- ЛОГИКА ИИ (STELA) ---
 async def get_stela_answer(prompt):
     if not ai_client:
-        return "Ошибка: Не настроен API ключ Groq."
+        return "Ошибка: Не настроен API ключ Groq в настройках сервера."
     
     def sync_ai():
         try:
             completion = ai_client.chat.completions.create(
                 model="llama-3.1-8b-instant",
                 messages=[
-                    {"role": "system", "content": "Ты — Стела. Остроумный и краткий ИИ ассистент. Отвечай на русском."},
+                    {"role": "system", "content": "Ты — Стела. Остроумная, мудрая и краткая. Отвечай на русском языке."},
                     {"role": "user", "content": prompt}
                 ],
             )
@@ -55,6 +56,7 @@ async def main_flet(page: ft.Page):
     page.window_bgcolor = ft.colors.BLACK
     page.vertical_alignment = ft.MainAxisAlignment.CENTER
     page.horizontal_alignment = ft.CrossAxisAlignment.CENTER
+    page.padding = 20
 
     # Визуальный эффект "Сферы"
     sphere = ft.Container(
@@ -69,30 +71,31 @@ async def main_flet(page: ft.Page):
         animate_scale=ft.animation.Animation(400, ft.AnimationCurve.BOUNCE_OUT),
     )
 
-    status_label = ft.Text("Стела слушает", size=16, italic=True, color=ft.colors.CYAN_100)
+    status_label = ft.Text("Стела готова", size=16, color=ft.colors.CYAN_100)
     input_field = ft.TextField(
-        label="Спроси Стелу...",
+        label="Спроси меня о чем-нибудь...",
         width=300,
-        border_radius=10,
+        border_radius=15,
         border_color=ft.colors.CYAN_900,
-        focused_border_color=ft.colors.CYAN_400
+        on_submit=lambda _: handle_submit(None)
     )
 
     async def handle_submit(e):
         if not input_field.value: return
         
+        user_text = input_field.value
+        input_field.value = ""
         status_label.value = "Стела думает..."
         sphere.scale = 1.2
         page.update()
 
-        response = await get_stela_answer(input_field.value)
+        response = await get_stela_answer(user_text)
         
         status_label.value = response
         sphere.scale = 1.0
-        input_field.value = ""
         
-        # Озвучка (работает в браузерах с поддержкой TTS)
-        if page.tts:
+        # Озвучка через браузер (если поддерживается)
+        if hasattr(page, "tts") and page.tts:
             page.tts.say(response)
         
         page.update()
@@ -104,7 +107,7 @@ async def main_flet(page: ft.Page):
         ft.Container(height=10),
         input_field,
         ft.ElevatedButton(
-            "Отправить", 
+            "Спросить", 
             on_click=handle_submit,
             style=ft.ButtonStyle(color=ft.colors.WHITE, bgcolor=ft.colors.BLUE_800)
         )
@@ -113,6 +116,7 @@ async def main_flet(page: ft.Page):
 # --- ТЕЛЕГРАМ БОТ ---
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message):
+    # Ссылка на Mini App (путь /stela монтируется ниже)
     markup = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(
             text="Запустить Стелу 🎙", 
@@ -120,26 +124,26 @@ async def cmd_start(message: types.Message):
         )]
     ])
     await message.answer(
-        "Я Стела. Твой новый ИИ-ассистент в формате Mini App. Нажми кнопку ниже!",
+        "Привет! Я Стела. Твой ИИ-ассистент. Нажми кнопку ниже, чтобы открыть мой разум.",
         reply_markup=markup
     )
 
 # --- ИНТЕГРАЦИЯ И ЗАПУСК ---
 app = FastAPI()
 
-# Подключаем Flet к FastAPI по пути /stela
+# Монтируем Flet приложение
 app.mount("/stela", flet_fastapi.app(main_flet))
 
 @app.on_event("startup")
 async def on_startup():
     if bot:
-        # Запускаем бота асинхронно, чтобы не блокировать сервер
+        logging.info("Запуск Telegram бота...")
         asyncio.create_task(dp.start_polling(bot))
     else:
-        logging.error("БОТ НЕ ЗАПУЩЕН: Проверь TELEGRAM_TOKEN!")
+        logging.error("БОТ НЕ ИНИЦИАЛИЗИРОВАН: Проверь TELEGRAM_TOKEN!")
 
 if __name__ == "__main__":
     import uvicorn
-    # Render передает порт через переменную окружения
+    # Render передает порт через переменную окружения PORT
     port = int(os.getenv("PORT", 10000))
     uvicorn.run(app, host="0.0.0.0", port=port)
