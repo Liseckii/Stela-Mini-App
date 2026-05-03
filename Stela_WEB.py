@@ -12,7 +12,7 @@ from groq import Groq
 load_dotenv()
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
-# Твой адрес на Render (проверь, чтобы совпадал!)
+# Твой адрес на Render
 RENDER_URL = "https://onrender.com" 
 
 logging.basicConfig(level=logging.INFO)
@@ -25,19 +25,21 @@ dp = Dispatcher()
 # --- ЛОГИКА AI (STELA) ---
 async def get_stela_answer(prompt):
     if not ai_client:
-        return "Ошибка: Не настроен API ключ Groq."
+        return "Ошибка: Не настроен API ключ Groq в Environment Variables."
     
     def sync_ai():
         try:
             completion = ai_client.chat.completions.create(
                 model="llama-3.1-8b-instant",
                 messages=[
-                    {"role": "system", "content": "Ты Стела, краткий ИИ ассистент."},
+                    {"role": "system", "content": "Ты Стела, краткий и остроумный ИИ ассистент. Отвечай на русском."},
                     {"role": "user", "content": prompt}
                 ]
             )
-            return completion.choices.message.content
+            # Исправленное обращение к результату (добавлен индекс [0])
+            return completion.choices[0].message.content
         except Exception as e:
+            logging.error(f"Groq Error: {e}")
             return f"Ошибка ИИ: {str(e)}"
 
     loop = asyncio.get_event_loop()
@@ -62,12 +64,13 @@ async def main_flet(page: ft.Page):
         animate_scale=ft.animation.Animation(400, ft.AnimationCurve.BOUNCE_OUT),
     )
 
-    status_label = ft.Text("Стела готова", size=16, text_align="center")
+    status_label = ft.Text("Стела готова к общению", size=16, text_align="center")
     input_field = ft.TextField(
-        label="Спроси меня...",
+        label="Спроси меня о чем-нибудь...",
         width=300,
         border_radius=15,
-        border_color=ft.colors.CYAN_900
+        border_color=ft.colors.CYAN_900,
+        on_submit=lambda _: asyncio.create_task(handle_submit(None))
     )
 
     async def handle_submit(e):
@@ -85,6 +88,7 @@ async def main_flet(page: ft.Page):
         status_label.value = response
         sphere.scale = 1.0
         
+        # Озвучка (TTS)
         if hasattr(page, "tts") and page.tts:
             page.tts.say(response)
         
@@ -112,15 +116,15 @@ async def cmd_start(message: types.Message):
             web_app=WebAppInfo(url=RENDER_URL)
         )]
     ])
-    await message.answer("Я готова. Нажми кнопку ниже!", reply_markup=markup)
+    await message.answer("Я Стела. Нажми кнопку ниже, чтобы войти в мой мир.", reply_markup=markup)
 
-# --- ЗАПУСК ---
+# --- ЗАПУСК ВСЕГО ---
 async def start_all():
     # Запуск бота в фоне
     if bot:
         asyncio.create_task(dp.start_polling(bot))
     
-    # Запуск Flet сервера
+    # Запуск веб-сервера Flet
     await ft.app_async(
         target=main_flet,
         view=ft.AppView.WEB_BROWSER,
