@@ -1,4 +1,4 @@
-flet==0.21.0
+flet
 flet-fastapi
 aiogram
 groq
@@ -6,3 +6,4 @@ python-dotenv
 uvicorn
 fastapi
 yandex-music
+static-ffmpeg
