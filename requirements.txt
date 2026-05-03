@@ -1,7 +1,5 @@
 flet==0.22.0
-flet-fastapi
 aiogram
 groq
 python-dotenv
 uvicorn
-fastapi
