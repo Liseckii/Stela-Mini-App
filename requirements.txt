@@ -4,3 +4,6 @@ groq
 python-dotenv
 uvicorn
 yandex-music
+python-docx
+python-pptx
+duckduckgo_search
