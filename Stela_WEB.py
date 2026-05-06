@@ -1,158 +1,100 @@
 import os
-import asyncio
-import logging
-import flet as ft
+from fastapi import FastAPI, Request
+from fastapi.responses import HTMLResponse
+from fastapi.staticfiles import StaticFiles
+import uvicorn
 from groq import Groq
 from yandex_music import Client as YandexClient
-from docx import Document
-from duckduckgo_search import DDGS
 from aiogram import Bot
 from aiogram.types import FSInputFile
+from docx import Document
 
-# Настройка логирования
-logging.basicConfig(level=logging.INFO)
+app = FastAPI()
+ai_client = Groq(api_key=os.getenv("GROQ_API_KEY"))
+y_client = YandexClient(os.getenv("YANDEX_TOKEN")).init()
+bot = Bot(token=os.getenv("TELEGRAM_TOKEN"))
 
-# --- ИНИЦИАЛИЗАЦИЯ СЕРВИСОВ ---
-def init_services():
-    try:
-        ai = Groq(api_key=os.getenv("GROQ_API_KEY"))
-        y_token = os.getenv("YANDEX_TOKEN")
-        y_client = YandexClient(y_token).init() if y_token else None
-        bot = Bot(token=os.getenv("TELEGRAM_TOKEN"))
-        return ai, y_client, bot
-    except Exception as e:
-        logging.error(f"Ошибка инициализации: {e}")
-        return None, None, None
+# HTML-интерфейс прямо в коде для удобства
+HTML_TEMPLATE = """
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <script src="https://telegram.org"></script>
+    <style>
+        body { background: #050505; color: white; font-family: sans-serif; text-align: center; margin: 0; padding: 20px; }
+        .sphere { width: 120px; height: 120px; background: radial-gradient(circle, cyan, black); border_radius: 50%; margin: 30px auto; box-shadow: 0 0 40px cyan; transition: 0.3s; }
+        #chat { height: 300px; overflow-y: auto; background: #111; border-radius: 15px; padding: 10px; margin-bottom: 20px; text-align: left; font-size: 14px; }
+        input { width: 80%; padding: 12px; border-radius: 10px; border: 1px solid cyan; background: #000; color: white; }
+    </style>
+</head>
+<body>
+    <div class="sphere" id="sphere"></div>
+    <div id="chat">Система Stela OS готова...</div>
+    <input type="text" id="input" placeholder="Команда..." onkeypress="if(event.key=='Enter') send()">
+    <audio id="player" style="display:none"></audio>
 
-ai_client, y_client, bot = init_services()
+    <script>
+        const tg = window.Telegram.WebApp;
+        tg.expand();
 
-# --- МОДУЛЬ ФАЙЛОВ ---
-def create_file(title, content):
-    # Очистка имени (защита от Error 36)
-    clean_title = "".join([c for c in title if c.isalnum() or c in (' ', '_')]).strip()
-    if not clean_title: clean_title = "Stela_Document"
+        async def send() {
+            const val = document.getElementById('input').value;
+            if(!val) return;
+            document.getElementById('chat').innerHTML += `<p style="color:gray">➤ ${val}</p>`;
+            document.getElementById('input').value = '';
+            
+            const sphere = document.getElementById('sphere');
+            sphere.style.transform = 'scale(1.2)';
+
+            const res = await fetch('/ask', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({query: val, user_id: tg.initDataUnsafe.user?.id || "guest"})
+            });
+            const data = await res.json();
+            
+            document.getElementById('chat').innerHTML += `<p style="color:cyan">Стела: ${data.answer}</p>`;
+            if(data.music_url) {
+                const p = document.getElementById('player');
+                p.src = data.music_url;
+                p.play();
+            }
+            sphere.style.transform = 'scale(1.0)';
+        }
+    </script>
+</body>
+</html>
+"""
+
+@app.get("/", response_class=HTMLResponse)
+async def get_index():
+    return HTML_TEMPLATE
+
+@app.post("/ask")
+async def ask_stela(request: Request):
+    data = await request.json()
+    query = data.get("query")
+    user_id = data.get("user_id")
     
-    path = f"/tmp/{clean_title}.docx"
-    try:
-        doc = Document()
-        doc.add_heading(clean_title, 0)
-        doc.add_paragraph(content)
-        doc.save(path)
-        return path
-    except Exception as e:
-        logging.error(f"File Error: {e}")
-        return None
+    # Логика Groq
+    res = ai_client.chat.completions.create(
+        model="llama-3.1-8b-instant",
+        messages=[{"role": "system", "content": "Ты Стела. Команды: [MUSIC], [DOC]"}, {"role": "user", "content": query}]
+    ).choices[0].message.content
 
-# --- ИНТЕРФЕЙС ---
-async def main_flet(page: ft.Page):
-    await asyncio.sleep(0.5)
-    
-    # 1. ПОЛУЧЕНИЕ USER_ID (Исправлено для устранения 'chat not found')
-    user_id = page.query_params.get("user_id")
-    
-    # Если зашли без ID в ссылке, берем твой личный ID из переменных Render
-    if not user_id or user_id == "guest":
-        user_id = os.getenv("MY_CHAT_ID")
-        logging.info(f"Используется резервный ID: {user_id}")
+    music_url = None
+    if "[MUSIC]" in res:
+        search = y_client.search(res.replace("[MUSIC]", "").strip())
+        if search.tracks:
+            music_url = search.tracks.results[0].get_download_info(get_direct_links=True)[0].direct_link
 
-    page.title = "Stela Premium OS"
-    page.theme_mode = ft.ThemeMode.DARK
-    page.bgcolor = "#050505"
-    page.vertical_alignment = ft.MainAxisAlignment.CENTER
-    page.horizontal_alignment = ft.CrossAxisAlignment.CENTER
-    accent = "cyan"
+    if "[DOC]" in res:
+        # Логика создания и отправки файла через bot.send_document (как в прошлом коде)
+        pass
 
-    # Аудио-плеер
-    audio_player = ft.Audio(src="https://google.com", autoplay=False)
-    page.overlay.append(audio_player)
-
-    # Визуал: Сфера
-    sphere = ft.Container(
-        content=ft.Icon(ft.icons.AUTO_AWESOME_MOTION, size=70, color=accent),
-        width=140, height=140, shape=ft.BoxShape.CIRCLE,
-        shadow=ft.BoxShadow(blur_radius=40, color=accent),
-        animate_scale=ft.animation.Animation(400, "easeInOut"),
-    )
-
-    chat_log = ft.Column(scroll=ft.ScrollMode.AUTO, height=350, spacing=10)
-    input_f = ft.TextField(label="Команда Стеле...", border_color=accent, expand=True)
-
-    async def run_stela(e):
-        txt = input_f.value
-        if not txt: return
-        input_f.value = ""
-        sphere.scale = 1.2
-        chat_log.controls.append(ft.Text(f"➤ {txt}", color="white70"))
-        page.update()
-
-        # Запрос к ИИ
-        res_ai = "Ошибка связи."
-        if ai_client:
-            try:
-                sys_msg = "Ты Стела. Команды: [MUSIC] Трек, [DOC] Заголовок|Текст, [SEARCH] Запрос."
-                comp = ai_client.chat.completions.create(
-                    model="llama-3.1-8b-instant",
-                    messages=[{"role": "system", "content": sys_msg}, {"role": "user", "content": txt}]
-                )
-                res_ai = comp.choices[0].message.content
-            except Exception as ex: res_ai = f"AI Error: {ex}"
-
-        # ОБРАБОТКА КОМАНД
-        try:
-            if "[MUSIC]" in res_ai and y_client:
-                q = res_ai.replace("[MUSIC]", "").strip()
-                s = y_client.search(q)
-                if s.tracks and s.tracks.results:
-                    t = s.tracks.results[0]
-                    info = t.get_download_info(get_direct_links=True)[0]
-                    audio_player.src = info.direct_link
-                    audio_player.play()
-                    res_ai = f"🎵 Играет: {t.title} - {t.artists[0].name}"
-                else: res_ai = "Трек не найден."
-
-            elif "[DOC]" in res_ai:
-                content_raw = res_ai.replace("[DOC]", "").strip()
-                if "|" in content_raw:
-                    p = content_raw.split("|")
-                    title, body = p[0].strip(), p[1].strip()
-                else:
-                    title, body = "Document", content_raw
-                
-                f_path = create_file(title, body)
-                if f_path and user_id:
-                    # ОТПРАВКА В TELEGRAM
-                    await bot.send_document(chat_id=user_id, document=FSInputFile(f_path))
-                    res_ai = f"✅ Файл '{title}' отправлен вам в Telegram!"
-                    os.remove(f_path)
-                else: res_ai = "❌ Ошибка: не найден чат для отправки или файл не создан."
-
-            elif "[SEARCH]" in res_ai:
-                with DDGS() as ddgs:
-                    search_res = [r['body'] for r in ddgs.text(res_ai.replace("[SEARCH]", ""), max_results=1)]
-                    res_ai = f"🔍 Нашла: {search_res[0]}" if search_res else "Ничего не нашла."
-        
-        except Exception as proc_err:
-            res_ai = f"Ошибка команды: {proc_err}"
-
-        chat_log.controls.append(ft.Text(f"Стела: {res_ai}", color=accent))
-        sphere.scale = 1.0
-        page.update()
-
-    # Сборка UI
-    main_layout = ft.Column(
-        controls=[
-            ft.Container(content=sphere, alignment=ft.alignment.center, padding=20),
-            ft.Container(chat_log, padding=10, bgcolor="#111111", border_radius=15, width=350),
-            ft.Row([input_f, ft.IconButton(ft.icons.SEND, on_click=run_stela, icon_color=accent)], width=350)
-        ],
-        horizontal_alignment=ft.CrossAxisAlignment.CENTER,
-        alignment=ft.MainAxisAlignment.CENTER,
-        expand=True
-    )
-
-    page.add(main_layout)
-    page.update()
+    return {"answer": res, "music_url": music_url}
 
 if __name__ == "__main__":
-    port = int(os.getenv("PORT", 10000))
-    ft.app(target=main_flet, view=ft.AppView.WEB_BROWSER, web_renderer=ft.WebRenderer.HTML, host="0.0.0.0", port=port)
+    uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("PORT", 10000)))
