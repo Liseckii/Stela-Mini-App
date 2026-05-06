@@ -1,9 +1,8 @@
-flet==0.22.1
-aiogram
+fastapi
+uvicorn
 groq
-supabase
 yandex-music
 python-docx
-python-pptx
-duckduckgo_search
+duckduckgo-search
+aiogram
 python-dotenv
