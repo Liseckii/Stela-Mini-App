@@ -7,3 +7,4 @@ python-pptx
 duckduckgo-search
 aiogram
 python-dotenv
+pydub
