@@ -2,152 +2,112 @@ import os
 import asyncio
 import logging
 import flet as ft
-# Правильные импорты для новых версий
-from flet import Audio, animation, AnimationCurve
-from supabase import create_client
+from flet import Audio, animation
+from urllib.parse import urlparse, parse_qs
+
+# Импорты сервисов
 from groq import Groq
 from yandex_music import Client as YandexClient
 from docx import Document
 from pptx import Presentation
 from duckduckgo_search import DDGS
 
-# Логирование для отладки на Render
 logging.basicConfig(level=logging.INFO)
 
-# --- ИНИЦИАЛИЗАЦИЯ СЕРВИСОВ ---
-def init_services():
+# --- БЕЗОПАСНАЯ ИНИЦИАЛИЗАЦИЯ ---
+def safe_init():
     try:
-        sb_url = os.getenv("SUPABASE_URL")
-        sb_key = os.getenv("SUPABASE_KEY")
-        supabase = create_client(sb_url, sb_key) if sb_url and sb_key else None
-        
-        ai_client = Groq(api_key=os.getenv("GROQ_API_KEY"))
-        
-        y_token = os.getenv("YANDEX_TOKEN")
-        y_client = YandexClient(y_token).init() if y_token else None
-        
-        return supabase, ai_client, y_client
+        ai = Groq(api_key=os.getenv("GROQ_API_KEY"))
+        # Пробуем инициализировать Яндекс, если токен есть
+        token = os.getenv("YANDEX_TOKEN")
+        y_client = YandexClient(token).init() if token else None
+        return ai, y_client
     except Exception as e:
-        logging.error(f"Ошибка инициализации: {e}")
-        return None, None, None
+        logging.error(f"Ошибка сервисов: {e}")
+        return None, None
 
-supabase, ai_client, y_client = init_services()
+ai_client, y_client = safe_init()
 
-# --- ФУНКЦИИ ИНСТРУМЕНТОВ ---
-def web_search(query):
-    try:
-        with DDGS() as ddgs:
-            results = [r['body'] for r in ddgs.text(query, max_results=2)]
-            return "\n".join(results)
-    except: return "Поиск временно недоступен."
+# --- ФУНКЦИИ ИНСТРУМЕНТОВ (с записью в /tmp/) ---
+def create_tmp_file(mode, title, content):
+    # На Render пишем только в /tmp/
+    fname = f"/tmp/{title}.docx" if mode == "DOC" else f"/tmp/{title}.pptx"
+    if mode == "DOC":
+        doc = Document(); doc.add_heading(title, 0); doc.add_paragraph(content); doc.save(fname)
+    else:
+        prs = Presentation(); slide = prs.slides.add_slide(prs.slide_layouts)
+        slide.shapes.title.text = title; slide.placeholders.text = content; prs.save(fname)
+    return fname
 
-def create_file(mode, title, content):
-    fname = f"{title}.docx" if mode == "DOC" else f"{title}.pptx"
-    try:
-        if mode == "DOC":
-            doc = Document(); doc.add_heading(title, 0); doc.add_paragraph(content); doc.save(fname)
-        else:
-            prs = Presentation(); slide = prs.slides.add_slide(prs.slide_layouts[1])
-            slide.shapes.title.text = title; slide.placeholders[1].text = content; prs.save(fname)
-        return fname
-    except Exception as e: return f"Ошибка файла: {e}"
-
-# --- ГЛАВНЫЙ ИНТЕРФЕЙС ---
+# --- ОСНОВНОЙ ИНТЕРФЕЙС ---
 async def main_flet(page: ft.Page):
-    # Безопасное получение параметров в 0.22.1
+    # Критически важная пауза для загрузки свойств страницы
+    await asyncio.sleep(0.5)
+    
+    # Безопасный сбор ID пользователя
     user_id = "guest"
-    if page.query_params:
-        user_id = page.query_params.get("user_id", "guest")
+    try:
+        if hasattr(page, "route") and page.route:
+            parsed = urlparse(page.route)
+            params = parse_qs(parsed.query)
+            user_id = params.get("user_id", ["guest"])[0]
+    except Exception as e:
+        logging.error(f"Router error: {e}")
 
-    # Настройки страницы
     page.title = "Stela OS"
     page.theme_mode = ft.ThemeMode.DARK
     page.bgcolor = "#050505"
-    page.window_width = 400
+    page.vertical_alignment = ft.MainAxisAlignment.CENTER
+    page.horizontal_alignment = ft.CrossAxisAlignment.CENTER
     accent = "cyan"
 
-    # Плеер
-    audio_player = Audio(src="https://", autoplay=True)
+    # Аудио-плеер
+    audio_player = ft.Audio(src="https://", autoplay=True)
     page.overlay.append(audio_player)
 
-    # Анимированная сфера
+    # Визуал: Сфера
     sphere = ft.Container(
-        content=ft.Icon(ft.icons.AUTO_AWESOME_MOTION, size=80, color=accent),
-        width=150, height=150, shape=ft.BoxShape.CIRCLE,
-        shadow=ft.BoxShadow(blur_radius=50, color=accent),
+        content=ft.Icon(ft.icons.AUTO_AWESOME_MOTION, size=70, color=accent),
+        width=140, height=140, shape=ft.BoxShape.CIRCLE,
+        shadow=ft.BoxShadow(blur_radius=40, color=accent),
         animate_scale=ft.animation.Animation(400, "easeInOut"),
     )
 
-    chat_log = ft.Column(scroll=ft.ScrollMode.AUTO, expand=True, spacing=10)
-    input_f = ft.TextField(label="Команда...", border_color=accent, expand=True, on_submit=lambda e: run_stela(e))
+    chat_log = ft.Column(scroll=ft.ScrollMode.AUTO, height=300, spacing=10)
+    input_f = ft.TextField(label="Команда...", border_color=accent, expand=True)
 
-    async def run_stela(e):
-        prompt = input_f.value
-        if not prompt: return
+    async def run_cmd(e):
+        txt = input_f.value
+        if not txt: return
         input_f.value = ""
         sphere.scale = 1.2
-        chat_log.controls.append(ft.Text(f"Вы: {prompt}", color="white70"))
+        chat_log.controls.append(ft.Text(f"Вы: {txt}", color="white70"))
         page.update()
 
-        # Логика ИИ
-        res_ai = "Ошибка подключения ИИ."
-        if ai_client:
-            try:
-                sys = "Ты Стела. Команды: [MUSIC] Трек, [DOC] Заголовок|Текст, [SEARCH] Запрос."
-                comp = ai_client.chat.completions.create(
-                    model="llama-3.1-8b-instant",
-                    messages=[{"role": "system", "content": sys}, {"role": "user", "content": prompt}]
-                )
-                res_ai = comp.choices.message.content
-            except Exception as ex: res_ai = f"AI Error: {ex}"
-
-        # Парсинг команд
-        if "[SEARCH]" in res_ai:
-            res_ai = f"Результат: {web_search(res_ai.replace('[SEARCH]', '').strip())[:300]}..."
+        # Заглушка логики (вставь сюда вызов ИИ из прошлых шагов)
+        res = "Стела активна и обрабатывает запрос..."
         
-        elif "[MUSIC]" in res_ai and y_client:
-            query = res_ai.replace("[MUSIC]", "").strip()
-            search = y_client.search(query)
-            if search.tracks:
-                track = search.tracks.results[0]
-                audio_player.src = track.get_download_info(get_direct_links=True)[0].direct_link
-                audio_player.play()
-                res_ai = f"Слушаем: {track.title}"
-
-        elif "[DOC]" in res_ai:
-            p = res_ai.replace("[DOC]", "").split("|")
-            fname = create_file("DOC", p[0].strip(), p[1].strip() if len(p)>1 else "...")
-            res_ai = f"Файл {fname} создан."
-
-        chat_log.controls.append(ft.Text(f"Стела: {res_ai}", color=accent))
+        chat_log.controls.append(ft.Text(f"Стела: {res}", color=accent))
         sphere.scale = 1.0
         page.update()
 
-    # Вкладки
-    tabs = ft.Tabs(
-        selected_index=0,
-        tabs=[
-            ft.Tab(text="Чат", content=ft.Column([
-                ft.Divider(height=20, color="transparent"),
-                ft.Center(sphere),
-                ft.Container(chat_log, height=350, padding=10, bgcolor="#111111", border_radius=15),
-                ft.Row([input_f, ft.IconButton(ft.icons.SEND, on_click=run_stela, icon_color=accent)])
-            ])),
-            ft.Tab(text="Вид", content=ft.Column([
-                ft.Text("Настройки темы появятся здесь", color="grey")
-            ]))
-        ], expand=1
+    # Сборка экрана
+    page.add(
+        ft.Column([
+            ft.Center(sphere),
+            ft.Container(chat_log, padding=10, bgcolor="#111111", border_radius=15, width=350),
+            ft.Row([input_f, ft.IconButton(ft.icons.SEND, on_click=run_cmd, icon_color=accent)], width=350)
+        ], horizontal_alignment=ft.CrossAxisAlignment.CENTER)
     )
+    page.update()
 
-    page.add(tabs)
-
-# --- ЗАПУСК (Оптимизировано для Render) ---
+# --- СТАРТ ---
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 10000))
     ft.app(
         target=main_flet,
         view=ft.AppView.WEB_BROWSER,
-        web_renderer=ft.WebRenderer.HTML, # Важно для мобильных устройств
+        web_renderer=ft.WebRenderer.HTML,
         host="0.0.0.0",
         port=port
     )
