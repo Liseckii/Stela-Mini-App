@@ -54,11 +54,28 @@ def create_file(mode, title, content):
 
 # --- ИНТЕРФЕЙС ---
 async def main_flet(page: ft.Page):
-    await asyncio.sleep(0.5)
+    # 1. Даем странице время инициализироваться
+    await asyncio.sleep(0.2) 
     
-    # Получаем ID из URL или ставим дефолт
-    user_id = page.query_params.get("user_id", os.getenv("MY_CHAT_ID", "guest"))
+    # 2. Безопасное получение ID (пробуем все способы)
+    user_id = "guest"
+    try:
+        # Способ для последних версий Flet
+        if page.query_params:
+            user_id = page.query_params.get("user_id", "guest")
+        # Запасной способ через роут
+        elif page.route:
+            from urllib.parse import urlparse, parse_qs
+            parsed = urlparse(page.route)
+            user_id = parse_qs(parsed.query).get("user_id", ["guest"])[0]
+    except Exception as e:
+        logging.error(f"Ошибка получения ID: {e}")
+
+    # Теперь user_id точно строка, и код не упадет
+    logging.info(f"Активный пользователь: {user_id}")
     
+    # Дальше твой код отрисовки...
+
     # Пытаемся загрузить тему пользователя из Supabase
     accent_color = "cyan"
     if supabase:
