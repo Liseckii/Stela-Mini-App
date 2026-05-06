@@ -26,12 +26,15 @@ async def ask(request: Request):
         query = data.get("query", "Привет")
         
         # Запрос к Llama
+               # Используем новейшую модель Llama 3.1
         completion = ai_client.chat.completions.create(
-            model="llama3-8b-8192",
+            model="llama-3.1-8b-instant", 
             messages=[
                 {"role": "system", "content": "Ты Стела OS. Отвечай кратко."},
                 {"role": "user", "content": query}
             ]
+        )
+
         )
         answer = completion.choices[0].message.content
         music_url = None
