@@ -9,10 +9,8 @@ from pptx import Presentation
 from duckduckgo_search import DDGS
 from urllib.parse import urlparse, parse_qs
 
-# Настройка логирования
 logging.basicConfig(level=logging.INFO)
 
-# --- ИНИЦИАЛИЗАЦИЯ СЕРВИСОВ ---
 def init_services():
     try:
         ai = Groq(api_key=os.getenv("GROQ_API_KEY"))
@@ -20,50 +18,41 @@ def init_services():
         y_client = YandexClient(y_token).init() if y_token else None
         return ai, y_client
     except Exception as e:
-        logging.error(f"Ошибка инициализации сервисов: {e}")
+        logging.error(f"Ошибка сервисов: {e}")
         return None, None
 
 ai_client, y_client = init_services()
 
-# --- ФУНКЦИИ ИНСТРУМЕНТОВ ---
-def web_search(query):
-    try:
-        with DDGS() as ddgs:
-            results = [r['body'] for r in ddgs.text(query, max_results=2)]
-            return "\n".join(results)
-    except:
-        return "Поиск временно недоступен."
-
+# --- ИСПРАВЛЕННАЯ ФУНКЦИЯ ФАЙЛОВ ---
 def create_file(mode, title, content):
-    fname = f"/tmp/{title}.docx" if mode == "DOC" else f"/tmp/{title}.pptx"
+    # Очищаем заголовок от запрещенных символов
+    clean_title = "".join([c for c in title if c.isalnum() or c in (' ', '_')]).strip()
+    if not clean_title: clean_title = "Document"
+    
+    # Путь ТОЛЬКО в /tmp/
+    fname = f"/tmp/{clean_title}.docx" if mode == "DOC" else f"/tmp/{clean_title}.pptx"
+    
     try:
         if mode == "DOC":
             doc = Document()
-            doc.add_heading(title, 0)
+            doc.add_heading(clean_title, 0)
             doc.add_paragraph(content)
             doc.save(fname)
         else:
             prs = Presentation()
-            slide = prs.slides.add_slide(prs.slide_layouts)
-            slide.shapes.title.text = title
-            slide.placeholders.text = content
+            slide = prs.slides.add_slide(prs.slide_layouts[0])
+            slide.shapes.title.text = clean_title
+            slide.placeholders[1].text = content
             prs.save(fname)
         return fname
     except Exception as e:
-        return f"Ошибка файла: {e}"
+        logging.error(f"File Error: {e}")
+        return f"Ошибка: {str(e)}"
 
-# --- ГЛАВНЫЙ ИНТЕРФЕЙС ---
+# --- ИНТЕРФЕЙС ---
 async def main_flet(page: ft.Page):
     await asyncio.sleep(0.5)
-    user_id = "guest"
-    try:
-        if page.route:
-            parsed = urlparse(page.route)
-            params = parse_qs(parsed.query)
-            user_id = params.get("user_id", ["guest"])[0]
-    except:
-        pass
-
+    
     page.title = "Stela OS"
     page.theme_mode = ft.ThemeMode.DARK
     page.bgcolor = "#050505"
@@ -71,11 +60,10 @@ async def main_flet(page: ft.Page):
     page.horizontal_alignment = ft.CrossAxisAlignment.CENTER
     accent = "cyan"
 
-    # АУДИО
-    audio_player = ft.Audio(src="https://", autoplay=True)
+    # Плеер с добавлением уведомления об ошибке
+    audio_player = ft.Audio(src="", autoplay=True)
     page.overlay.append(audio_player)
 
-    # ВИЗУАЛ
     sphere = ft.Container(
         content=ft.Icon(ft.icons.AUTO_AWESOME_MOTION, size=70, color=accent),
         width=140, height=140, shape=ft.BoxShape.CIRCLE,
@@ -94,44 +82,47 @@ async def main_flet(page: ft.Page):
         chat_log.controls.append(ft.Text(f"Вы: {txt}", color="white70"))
         page.update()
 
-        res_ai = "Ошибка: Мозг ИИ не настроен."
+        res_ai = "Ошибка ИИ"
         if ai_client:
             try:
-                sys_msg = "Ты Стела. Команды: [MUSIC] Трек, [DOC] Заголовок|Текст, [SEARCH] Запрос."
+                sys_msg = "Ты Стела. Команды: [MUSIC] Исполнитель - Трек, [DOC] Заголовок|Текст, [SEARCH] Запрос."
                 comp = ai_client.chat.completions.create(
                     model="llama-3.1-8b-instant",
                     messages=[{"role": "system", "content": sys_msg}, {"role": "user", "content": txt}]
                 )
-                # ИСПРАВЛЕННАЯ СТРОКА ТУТ:
                 res_ai = comp.choices[0].message.content
             except Exception as ex:
                 res_ai = f"AI Error: {ex}"
 
-        # Обработка команд
-        if "[SEARCH]" in res_ai:
-            q = res_ai.replace("[SEARCH]", "").strip()
-            res_ai = f"Результат поиска: {web_search(q)[:250]}..."
-        elif "[MUSIC]" in res_ai and y_client:
+        # Команда МУЗЫКА
+        if "[MUSIC]" in res_ai and y_client:
             try:
                 q = res_ai.replace("[MUSIC]", "").strip()
                 s = y_client.search(q)
                 if s.tracks and s.tracks.results:
-                    t = s.tracks.results[0]
-                    audio_player.src = t.get_download_info(get_direct_links=True)[0].direct_link
+                    track = s.tracks.results[0]
+                    # Получаем ссылку на поток
+                    info = track.get_download_info(get_direct_links=True)
+                    audio_player.src = info[0].direct_link
                     audio_player.play()
-                    res_ai = f"Играет: {t.title} - {t.artists[0].name}"
-            except:
-                res_ai = "Не удалось запустить этот трек."
+                    res_ai = f"🎵 Играет: {track.title} - {track.artists[0].name}"
+                else:
+                    res_ai = "Трек не найден."
+            except Exception as music_err:
+                res_ai = f"Ошибка плеера: {music_err}"
+
+        # Команда ДОКУМЕНТ
         elif "[DOC]" in res_ai:
             p = res_ai.replace("[DOC]", "").split("|")
-            fname = create_file("DOC", p[0].strip() if p else "Doc", p[1].strip() if len(p)>1 else "...")
-            res_ai = f"Документ создан: {fname}"
+            title = p[0].strip() if p[0] else "Doc"
+            text = p[1].strip() if len(p) > 1 else "..."
+            path = create_file("DOC", title, text)
+            res_ai = f"📄 Файл создан: {path}"
 
         chat_log.controls.append(ft.Text(f"Стела: {res_ai}", color=accent))
         sphere.scale = 1.0
         page.update()
 
-    # СБОРКА ЭКРАНА
     main_layout = ft.Column(
         controls=[
             ft.Container(content=sphere, alignment=ft.alignment.center),
@@ -147,7 +138,6 @@ async def main_flet(page: ft.Page):
     page.add(main_layout)
     page.update()
 
-# --- ЗАПУСК ---
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 10000))
     ft.app(target=main_flet, view=ft.AppView.WEB_BROWSER, web_renderer=ft.WebRenderer.HTML, host="0.0.0.0", port=port)
