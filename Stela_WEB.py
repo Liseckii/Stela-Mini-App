@@ -7,104 +7,99 @@ from yandex_music import Client as YandexClient
 from docx import Document
 from pptx import Presentation
 from duckduckgo_search import DDGS
-from supabase import create_client, Client as SupabaseClient
+from supabase import create_client
 from aiogram import Bot
 from aiogram.types import FSInputFile
+from urllib.parse import urlparse, parse_qs
 
-# --- НАСТРОЙКИ ---
+# Настройка логирования для Render
 logging.basicConfig(level=logging.INFO)
 
+# --- БЕЗОПАСНАЯ ИНИЦИАЛИЗАЦИЯ ---
 def init_services():
     try:
-        # Инициализация Supabase
-        sb_url = os.getenv("SUPABASE_URL")
-        sb_key = os.getenv("SUPABASE_KEY")
-        supabase = create_client(sb_url, sb_key) if sb_url else None
-        
-        # Инициализация Groq
         ai = Groq(api_key=os.getenv("GROQ_API_KEY"))
-        
-        # Инициализация общего Яндекса (для гостей)
         y_token = os.getenv("YANDEX_TOKEN")
         y_client = YandexClient(y_token).init() if y_token else None
         
-        # Инициализация бота для отправки файлов
-        bot = Bot(token=os.getenv("TELEGRAM_TOKEN"))
+        sb_url = os.getenv("SUPABASE_URL")
+        sb_key = os.getenv("SUPABASE_KEY")
+        supabase = create_client(sb_url, sb_key) if sb_url and sb_key else None
         
-        return supabase, ai, y_client, bot
+        bot = Bot(token=os.getenv("TELEGRAM_TOKEN"))
+        return ai, y_client, supabase, bot
     except Exception as e:
-        logging.error(f"Ошибка инициализации: {e}")
+        logging.error(f"Critical Init Error: {e}")
         return None, None, None, None
 
-supabase, ai_client, y_client, bot = init_services()
+ai_client, y_client, supabase, bot = init_services()
 
-# --- ИНСТРУМЕНТЫ ---
+# --- МОДУЛЬ ФАЙЛОВ ---
 def create_file(mode, title, content):
     clean_title = "".join([c for c in title if c.isalnum() or c in (' ', '_')]).strip()
     if not clean_title: clean_title = "Document"
     fname = f"/tmp/{clean_title}.docx" if mode == "DOC" else f"/tmp/{clean_title}.pptx"
     try:
         if mode == "DOC":
-            doc = Document(); doc.add_heading(clean_title, 0); doc.add_paragraph(content); doc.save(fname)
+            doc = Document()
+            doc.add_heading(clean_title, 0)
+            doc.add_paragraph(content)
+            doc.save(fname)
         else:
-            prs = Presentation(); slide = prs.slides.add_slide(prs.slide_layouts)
-            slide.shapes.title.text = clean_title; slide.placeholders.text = content; prs.save(fname)
+            prs = Presentation()
+            slide = prs.slides.add_slide(prs.slides.add_slide_layouts[0])
+            slide.shapes.title.text = clean_title
+            slide.placeholders[1].text = content
+            prs.save(fname)
         return fname
-    except Exception as e: return f"Error: {e}"
+    except Exception as e:
+        return f"Error: {e}"
 
-# --- ИНТЕРФЕЙС ---
+# --- ГЛАВНЫЙ ИНТЕРФЕЙС ---
 async def main_flet(page: ft.Page):
-    # 1. Даем странице время инициализироваться
-    await asyncio.sleep(0.2) 
+    # Пауза для корректного сбора данных URL в мобильном WebApp
+    await asyncio.sleep(1.0)
     
-    # 2. Безопасное получение ID (пробуем все способы)
+    # Сбор данных пользователя
     user_id = "guest"
     try:
-        # Способ для последних версий Flet
-        if page.query_params:
-            user_id = page.query_params.get("user_id", "guest")
-        # Запасной способ через роут
+        if page.query_params and "user_id" in page.query_params:
+            user_id = str(page.query_params["user_id"])
         elif page.route:
-            from urllib.parse import urlparse, parse_qs
-            parsed = urlparse(page.route)
-            user_id = parse_qs(parsed.query).get("user_id", ["guest"])[0]
-    except Exception as e:
-        logging.error(f"Ошибка получения ID: {e}")
+            user_id = parse_qs(urlparse(page.route).query).get("user_id", ["guest"])[0]
+    except:
+        user_id = "guest"
 
-    # Теперь user_id точно строка, и код не упадет
-    logging.info(f"Активный пользователь: {user_id}")
-    
-    # Дальше твой код отрисовки...
-
-    # Пытаемся загрузить тему пользователя из Supabase
-    accent_color = "cyan"
-    if supabase:
+    # Параметры темы (загрузка из Supabase)
+    accent = "cyan"
+    page.bgcolor = "#050505"
+    if supabase and user_id != "guest":
         try:
-            res = supabase.table("stela_users").select("*").eq("user_id", str(user_id)).execute()
+            res = supabase.table("stela_users").select("accent_color, bg_color").eq("user_id", user_id).execute()
             if res.data:
-                accent_color = res.data[0].get("accent_color", "cyan")
+                accent = res.data[0].get("accent_color", "cyan")
+                page.bgcolor = res.data[0].get("bg_color", "#050505")
         except: pass
 
     page.title = "Stela OS"
     page.theme_mode = ft.ThemeMode.DARK
-    page.bgcolor = "#050505"
     page.vertical_alignment = ft.MainAxisAlignment.CENTER
     page.horizontal_alignment = ft.CrossAxisAlignment.CENTER
 
-    # Плеер с заглушкой
+    # Плеер
     audio_player = ft.Audio(src="https://google.com", autoplay=False)
     page.overlay.append(audio_player)
 
-    # Визуал
+    # Визуал: Сфера
     sphere = ft.Container(
-        content=ft.Icon(ft.icons.AUTO_AWESOME_MOTION, size=70, color=accent_color),
+        content=ft.Icon(ft.icons.AUTO_AWESOME_MOTION, size=70, color=accent),
         width=140, height=140, shape=ft.BoxShape.CIRCLE,
-        shadow=ft.BoxShadow(blur_radius=40, color=accent_color),
+        shadow=ft.BoxShadow(blur_radius=40, color=accent),
         animate_scale=ft.animation.Animation(400, "easeInOut"),
     )
 
     chat_log = ft.Column(scroll=ft.ScrollMode.AUTO, height=300, spacing=10)
-    input_f = ft.TextField(label="Команда...", border_color=accent_color, expand=True)
+    input_f = ft.TextField(label="Команда Стеле...", border_color=accent, expand=True)
 
     async def run_cmd(e):
         txt = input_f.value
@@ -114,10 +109,10 @@ async def main_flet(page: ft.Page):
         chat_log.controls.append(ft.Text(f"➤ {txt}", color="white70"))
         page.update()
 
-        res_ai = "Ошибка системы"
+        res_ai = "Ошибка ИИ"
         if ai_client:
             try:
-                sys_msg = "Ты Стела. Команды: [MUSIC] Трек, [DOC] Заголовок|Текст, [SEARCH] Запрос."
+                sys_msg = f"Ты Стела OS. Команды: [MUSIC] Трек, [DOC] Заголовок|Текст, [SEARCH] Запрос."
                 comp = ai_client.chat.completions.create(
                     model="llama-3.1-8b-instant",
                     messages=[{"role": "system", "content": sys_msg}, {"role": "user", "content": txt}]
@@ -125,45 +120,47 @@ async def main_flet(page: ft.Page):
                 res_ai = comp.choices[0].message.content
             except Exception as ex: res_ai = f"AI Error: {ex}"
 
-        # ОБРАБОТКА КОМАНД
+        # ОБРАБОТКА
         try:
             if "[MUSIC]" in res_ai and y_client:
                 q = res_ai.replace("[MUSIC]", "").strip()
                 s = y_client.search(q)
                 if s.tracks and s.tracks.results:
                     t = s.tracks.results[0]
-                    lnk = t.get_download_info(get_direct_links=True)[0].direct_link
-                    audio_player.src = lnk
+                    audio_player.src = t.get_download_info(get_direct_links=True)[0].direct_link
                     audio_player.play()
                     res_ai = f"🎵 Играет: {t.title}"
-                
+            
             elif "[DOC]" in res_ai:
                 p = res_ai.replace("[DOC]", "").split("|")
-                fname = create_file("DOC", p[0].strip(), p[1].strip() if len(p)>1 else "...")
-                # Отправка файла пользователю в Telegram
+                title = p[0].strip() if len(p) > 0 else "Doc"
+                text = p[1].strip() if len(p) > 1 else "..."
+                fname = create_file("DOC", title, text)
                 if bot and user_id != "guest":
                     await bot.send_document(chat_id=user_id, document=FSInputFile(fname))
-                    res_ai = f"📄 Файл создан и отправлен вам в личку."
-                else: res_ai = f"📄 Файл создан (войдите через бота для получения)."
+                    res_ai = f"📄 Файл отправлен в ваш Telegram."
+                else: res_ai = f"📄 Файл создан: {fname}"
+        except Exception as err: res_ai = f"Ошибка команды: {err}"
 
-            elif "[SEARCH]" in res_ai:
-                with DDGS() as ddgs:
-                    r = [res['body'] for res in ddgs.text(res_ai.replace("[SEARCH]", ""), max_results=2)]
-                    res_ai = f"🔍 Нашла: {' '.join(r)[:300]}..."
-        except Exception as err: res_ai = f"Ошибка: {err}"
-
-        chat_log.controls.append(ft.Text(f"Стела: {res_ai}", color=accent_color))
+        chat_log.controls.append(ft.Text(f"Стела: {res_ai}", color=accent))
         sphere.scale = 1.0
         page.update()
 
+    # Сборка UI
     page.add(
         ft.Column([
-            ft.Center(sphere),
+            ft.Container(content=sphere, alignment=ft.alignment.center, padding=20),
             ft.Container(chat_log, padding=10, bgcolor="#111111", border_radius=15, width=350),
-            ft.Row([input_f, ft.IconButton(ft.icons.SEND, on_click=run_cmd, icon_color=accent_color)], width=350)
+            ft.Row([input_f, ft.IconButton(ft.icons.SEND, on_click=run_cmd, icon_color=accent)], width=350)
         ], horizontal_alignment=ft.CrossAxisAlignment.CENTER)
     )
+    page.update()
 
 if __name__ == "__main__":
-    port = int(os.getenv("PORT", 10000))
-    ft.app(target=main_flet, view=ft.AppView.WEB_BROWSER, web_renderer=ft.WebRenderer.HTML, host="0.0.0.0", port=port)
+    ft.app(
+        target=main_flet, 
+        view=ft.AppView.WEB_BROWSER, 
+        web_renderer=ft.WebRenderer.HTML, 
+        host="0.0.0.0", 
+        port=int(os.getenv("PORT", 10000))
+    )
