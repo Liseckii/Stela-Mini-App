@@ -3,6 +3,7 @@ uvicorn
 groq
 yandex-music
 python-docx
+python-pptx
 duckduckgo-search
 aiogram
 python-dotenv
