@@ -8,18 +8,16 @@ from docx import Document
 from duckduckgo_search import DDGS
 from aiogram import Bot
 from aiogram.types import FSInputFile
-from urllib.parse import urlparse, parse_qs
 
 # Настройка логирования
 logging.basicConfig(level=logging.INFO)
 
-# --- ИНИЦИАЛИЗАЦИЯ ---
+# --- ИНИЦИАЛИЗАЦИЯ СЕРВИСОВ ---
 def init_services():
     try:
         ai = Groq(api_key=os.getenv("GROQ_API_KEY"))
         y_token = os.getenv("YANDEX_TOKEN")
         y_client = YandexClient(y_token).init() if y_token else None
-        # Бот для отправки файлов
         bot = Bot(token=os.getenv("TELEGRAM_TOKEN"))
         return ai, y_client, bot
     except Exception as e:
@@ -30,9 +28,9 @@ ai_client, y_client, bot = init_services()
 
 # --- МОДУЛЬ ФАЙЛОВ ---
 def create_file(title, content):
-    # Очистка имени от мусора (Error 36)
+    # Очистка имени (защита от Error 36)
     clean_title = "".join([c for c in title if c.isalnum() or c in (' ', '_')]).strip()
-    if not clean_title: clean_title = "Stela_Doc"
+    if not clean_title: clean_title = "Stela_Document"
     
     path = f"/tmp/{clean_title}.docx"
     try:
@@ -49,12 +47,13 @@ def create_file(title, content):
 async def main_flet(page: ft.Page):
     await asyncio.sleep(0.5)
     
-    # Получаем ID из URL (для многопользовательности) или из настроек
-    user_id = "guest"
-    try:
-        if page.query_params:
-            user_id = page.query_params.get("user_id", os.getenv("MY_CHAT_ID"))
-    except: pass
+    # 1. ПОЛУЧЕНИЕ USER_ID (Исправлено для устранения 'chat not found')
+    user_id = page.query_params.get("user_id")
+    
+    # Если зашли без ID в ссылке, берем твой личный ID из переменных Render
+    if not user_id or user_id == "guest":
+        user_id = os.getenv("MY_CHAT_ID")
+        logging.info(f"Используется резервный ID: {user_id}")
 
     page.title = "Stela Premium OS"
     page.theme_mode = ft.ThemeMode.DARK
@@ -63,7 +62,7 @@ async def main_flet(page: ft.Page):
     page.horizontal_alignment = ft.CrossAxisAlignment.CENTER
     accent = "cyan"
 
-    # Аудио-плеер (с заглушкой)
+    # Аудио-плеер
     audio_player = ft.Audio(src="https://google.com", autoplay=False)
     page.overlay.append(audio_player)
 
@@ -86,8 +85,8 @@ async def main_flet(page: ft.Page):
         chat_log.controls.append(ft.Text(f"➤ {txt}", color="white70"))
         page.update()
 
-        # 🧠 Запрос к ИИ
-        res_ai = "Ошибка связи с ИИ."
+        # Запрос к ИИ
+        res_ai = "Ошибка связи."
         if ai_client:
             try:
                 sys_msg = "Ты Стела. Команды: [MUSIC] Трек, [DOC] Заголовок|Текст, [SEARCH] Запрос."
@@ -98,36 +97,34 @@ async def main_flet(page: ft.Page):
                 res_ai = comp.choices[0].message.content
             except Exception as ex: res_ai = f"AI Error: {ex}"
 
-        # 🛠 Обработка команд
+        # ОБРАБОТКА КОМАНД
         try:
             if "[MUSIC]" in res_ai and y_client:
                 q = res_ai.replace("[MUSIC]", "").strip()
                 s = y_client.search(q)
                 if s.tracks and s.tracks.results:
                     t = s.tracks.results[0]
-                    # Оптимизация (убираем лишние заголовки - фикс ошибки 431)
-                    info = t.get_download_info(get_direct_links=True)
-                    audio_player.src = info[0].direct_link
+                    info = t.get_download_info(get_direct_links=True)[0]
+                    audio_player.src = info.direct_link
                     audio_player.play()
                     res_ai = f"🎵 Играет: {t.title} - {t.artists[0].name}"
                 else: res_ai = "Трек не найден."
 
             elif "[DOC]" in res_ai:
                 content_raw = res_ai.replace("[DOC]", "").strip()
-                # Парсинг заголовка и тела
                 if "|" in content_raw:
                     p = content_raw.split("|")
                     title, body = p[0].strip(), p[1].strip()
                 else:
-                    title, body = "Документ Стелы", content_raw
+                    title, body = "Document", content_raw
                 
                 f_path = create_file(title, body)
-                if f_path:
-                    # Отправка в TG
+                if f_path and user_id:
+                    # ОТПРАВКА В TELEGRAM
                     await bot.send_document(chat_id=user_id, document=FSInputFile(f_path))
                     res_ai = f"✅ Файл '{title}' отправлен вам в Telegram!"
-                    os.remove(f_path) # Чистим память
-                else: res_ai = "❌ Ошибка создания файла."
+                    os.remove(f_path)
+                else: res_ai = "❌ Ошибка: не найден чат для отправки или файл не создан."
 
             elif "[SEARCH]" in res_ai:
                 with DDGS() as ddgs:
@@ -156,13 +153,6 @@ async def main_flet(page: ft.Page):
     page.add(main_layout)
     page.update()
 
-# --- ЗАПУСК ---
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 10000))
-    ft.app(
-        target=main_flet, 
-        view=ft.AppView.WEB_BROWSER, 
-        web_renderer=ft.WebRenderer.HTML, 
-        host="0.0.0.0", 
-        port=port
-    )
+    ft.app(target=main_flet, view=ft.AppView.WEB_BROWSER, web_renderer=ft.WebRenderer.HTML, host="0.0.0.0", port=port)
