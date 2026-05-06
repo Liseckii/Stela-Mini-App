@@ -5,21 +5,21 @@ from fastapi import FastAPI, Request
 from groq import Groq
 from yandex_music import Client as YandexClient
 
-# Настройка логов
+# Логирование
 logging.basicConfig(level=logging.INFO)
 app = FastAPI()
 
-# Инициализация сервисов с проверкой ключей
+# Инициализация сервисов
 try:
     ai_client = Groq(api_key=os.getenv("GROQ_API_KEY"))
     y_token = os.getenv("YANDEX_TOKEN")
     y_client = YandexClient(y_token).init() if y_token else None
 except Exception as e:
-    logging.error(f"Ошибка при старте сервисов: {e}")
+    logging.error(f"Ошибка инициализации: {e}")
 
 @app.get("/")
 async def health():
-    return {"status": "Stela OS Server is Live", "ai_ready": os.getenv("GROQ_API_KEY") is not None}
+    return {"status": "Stela OS Server is Live"}
 
 @app.post("/ask")
 async def ask(request: Request):
@@ -30,15 +30,16 @@ async def ask(request: Request):
         if not query:
             return {"answer": "Запрос пуст."}
 
-        # 1. Запрос к ИИ
+        # 1. Запрос к ИИ (Исправлено: добавлен индекс [0])
         sys_msg = "Ты Стела OS. Команды: [MUSIC] Название. Отвечай кратко."
         completion = ai_client.chat.completions.create(
-            model="llama-3.1-8b-instant",
+            model="llama3-8b-8192", 
             messages=[
                 {"role": "system", "content": sys_msg},
                 {"role": "user", "content": query}
             ]
         )
+        # КЛЮЧЕВОЕ ИСПРАВЛЕНИЕ: choices[0]
         answer = completion.choices[0].message.content
         music_url = None
 
@@ -59,7 +60,7 @@ async def ask(request: Request):
 
     except Exception as e:
         logging.error(f"Ошибка сервера: {e}")
-        return {"answer": f"Системная ошибка: {str(e)}"}
+        return {"answer": f"Ошибка: {str(e)}"}
 
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 10000))
