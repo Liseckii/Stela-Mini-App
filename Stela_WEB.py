@@ -49,9 +49,12 @@ def web_search(query):
 # --- ИНТЕРФЕЙС СТЕЛЫ ---
 
 async def main_flet(page: ft.Page):
-    # Получаем настройки из Supabase
-    user_id = page.route_context.query.get("user_id", ["default"])[0]
+    # В версии 0.22.0 параметры URL лежат здесь:
+    user_id = page.query_params.get("user_id", "default_user")
     
+    # Печатаем для отладки в логи Render (увидишь в консоли)
+    print(f"Запуск для пользователя: {user_id}")
+
     # Загружаем тему (если нет — дефолт)
     res = supabase.table("stela_users").select("*").eq("user_id", user_id).execute()
     u_data = res.data[0] if res.data else {"bg_color": "#000000", "accent_color": "cyan"}
