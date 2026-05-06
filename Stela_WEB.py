@@ -138,5 +138,13 @@ async def main_flet(page: ft.Page):
 
 # Запуск приложения на Render
 if __name__ == "__main__":
-    port = int(os.getenv("PORT", 10000))
-    ft.app(target=main_flet, view=ft.AppView.WEB_BROWSER, host="0.0.0.0", port=port)
+    import os
+    # Render автоматически передает номер порта в переменную PORT
+    port = int(os.getenv("PORT", 10000)) 
+    
+    ft.app(
+        target=main_flet,
+        view=ft.AppView.WEB_BROWSER,
+        host="0.0.0.0",  # ОБЯЗАТЕЛЬНО для Render
+        port=port        # ОБЯЗАТЕЛЬНО для Render
+    )
