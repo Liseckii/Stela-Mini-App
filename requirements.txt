@@ -1,9 +1,9 @@
 flet==0.22.0
 aiogram
 groq
-python-dotenv
-uvicorn
+supabase
 yandex-music
 python-docx
 python-pptx
 duckduckgo_search
+python-dotenv
