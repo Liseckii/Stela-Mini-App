@@ -54,7 +54,6 @@ def create_file(mode, title, content):
 
 # --- ГЛАВНЫЙ ИНТЕРФЕЙС ---
 async def main_flet(page: ft.Page):
-    # 1. ПАУЗА И ПАРАМЕТРЫ
     await asyncio.sleep(0.5)
     user_id = "guest"
     try:
@@ -65,7 +64,6 @@ async def main_flet(page: ft.Page):
     except:
         pass
 
-    # 2. НАСТРОЙКИ СТРАНИЦЫ
     page.title = "Stela OS"
     page.theme_mode = ft.ThemeMode.DARK
     page.bgcolor = "#050505"
@@ -73,11 +71,11 @@ async def main_flet(page: ft.Page):
     page.horizontal_alignment = ft.CrossAxisAlignment.CENTER
     accent = "cyan"
 
-    # 3. АУДИО
+    # АУДИО
     audio_player = ft.Audio(src="https://", autoplay=True)
     page.overlay.append(audio_player)
 
-    # 4. ВИЗУАЛ
+    # ВИЗУАЛ
     sphere = ft.Container(
         content=ft.Icon(ft.icons.AUTO_AWESOME_MOTION, size=70, color=accent),
         width=140, height=140, shape=ft.BoxShape.CIRCLE,
@@ -96,7 +94,6 @@ async def main_flet(page: ft.Page):
         chat_log.controls.append(ft.Text(f"Вы: {txt}", color="white70"))
         page.update()
 
-        # Логика ИИ
         res_ai = "Ошибка: Мозг ИИ не настроен."
         if ai_client:
             try:
@@ -105,7 +102,8 @@ async def main_flet(page: ft.Page):
                     model="llama-3.1-8b-instant",
                     messages=[{"role": "system", "content": sys_msg}, {"role": "user", "content": txt}]
                 )
-                res_ai = comp.choices.message.content
+                # ИСПРАВЛЕННАЯ СТРОКА ТУТ:
+                res_ai = comp.choices[0].message.content
             except Exception as ex:
                 res_ai = f"AI Error: {ex}"
 
@@ -114,13 +112,16 @@ async def main_flet(page: ft.Page):
             q = res_ai.replace("[SEARCH]", "").strip()
             res_ai = f"Результат поиска: {web_search(q)[:250]}..."
         elif "[MUSIC]" in res_ai and y_client:
-            q = res_ai.replace("[MUSIC]", "").strip()
-            s = y_client.search(q)
-            if s.tracks:
-                t = s.tracks.results[0]
-                audio_player.src = t.get_download_info(get_direct_links=True)[0].direct_link
-                audio_player.play()
-                res_ai = f"Играет: {t.title}"
+            try:
+                q = res_ai.replace("[MUSIC]", "").strip()
+                s = y_client.search(q)
+                if s.tracks and s.tracks.results:
+                    t = s.tracks.results[0]
+                    audio_player.src = t.get_download_info(get_direct_links=True)[0].direct_link
+                    audio_player.play()
+                    res_ai = f"Играет: {t.title} - {t.artists[0].name}"
+            except:
+                res_ai = "Не удалось запустить этот трек."
         elif "[DOC]" in res_ai:
             p = res_ai.replace("[DOC]", "").split("|")
             fname = create_file("DOC", p[0].strip() if p else "Doc", p[1].strip() if len(p)>1 else "...")
@@ -130,25 +131,13 @@ async def main_flet(page: ft.Page):
         sphere.scale = 1.0
         page.update()
 
-    # 5. СБОРКА ЭКРАНА
+    # СБОРКА ЭКРАНА
     main_layout = ft.Column(
         controls=[
             ft.Container(content=sphere, alignment=ft.alignment.center),
             ft.Container(height=10),
-            ft.Container(
-                content=chat_log, 
-                padding=10, 
-                bgcolor="#111111", 
-                border_radius=15, 
-                width=350
-            ),
-            ft.Container(
-                content=ft.Row([
-                    input_f, 
-                    ft.IconButton(ft.icons.SEND, on_click=run_cmd, icon_color=accent)
-                ]),
-                width=350
-            )
+            ft.Container(content=chat_log, padding=10, bgcolor="#111111", border_radius=15, width=350),
+            ft.Container(content=ft.Row([input_f, ft.IconButton(ft.icons.SEND, on_click=run_cmd, icon_color=accent)]), width=350)
         ],
         horizontal_alignment=ft.CrossAxisAlignment.CENTER,
         alignment=ft.MainAxisAlignment.CENTER,
@@ -161,10 +150,4 @@ async def main_flet(page: ft.Page):
 # --- ЗАПУСК ---
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 10000))
-    ft.app(
-        target=main_flet,
-        view=ft.AppView.WEB_BROWSER,
-        web_renderer=ft.WebRenderer.HTML,
-        host="0.0.0.0",
-        port=port
-    )
+    ft.app(target=main_flet, view=ft.AppView.WEB_BROWSER, web_renderer=ft.WebRenderer.HTML, host="0.0.0.0", port=port)
