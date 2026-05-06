@@ -1,37 +1,32 @@
 import os
 import asyncio
 import logging
-import json
 import flet as ft
 from flet import audio
-from dotenv import load_dotenv
-from aiogram import Bot, Dispatcher, types
-from aiogram.filters import Command
-from aiogram.types import WebAppInfo, InlineKeyboardMarkup, InlineKeyboardButton, FSInputFile
+from supabase import create_client, Client as SupabaseClient
 from groq import Groq
-from yandex_music import Client
+from yandex_music import Client as YandexClient
 from docx import Document
 from pptx import Presentation
 from duckduckgo_search import DDGS
 
-# 1. КОНФИГУРАЦИЯ
-load_dotenv()
+# 1. КОНФИГУРАЦИЯ (Берем всё из переменных Render)
+load_dotenv = lambda: None # На Render переменные подтягиваются сами
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 YANDEX_TOKEN = os.getenv("YANDEX_TOKEN")
-MY_CHAT_ID = os.getenv("MY_CHAT_ID") # Твой ID в телеграм для получения файлов
-RENDER_URL = os.getenv("RENDER_URL", "https://onrender.com")
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_KEY = os.getenv("SUPABASE_KEY") # Тот самый ключ, что ты прислал
+MY_CHAT_ID = os.getenv("MY_CHAT_ID")
 
-logging.basicConfig(level=logging.INFO)
-
-ai_client = Groq(api_key=GROQ_API_KEY) if GROQ_API_KEY else None
-y_client = Client(YANDEX_TOKEN).init() if YANDEX_TOKEN else None
-bot = Bot(token=TELEGRAM_TOKEN) if TELEGRAM_TOKEN else None
-dp = Dispatcher()
+# Инициализация сервисов
+supabase: SupabaseClient = create_client(SUPABASE_URL, SUPABASE_KEY) if SUPABASE_URL else None
+ai_client = Groq(api_key=GROQ_API_KEY)
+y_client = YandexClient(YANDEX_TOKEN).init()
 
 # --- ФУНКЦИИ ИНСТРУМЕНТОВ ---
 
-def create_files(mode, title, content):
+def create_and_send_doc(mode, title, content):
     fname = f"{title}.docx" if mode == "DOC" else f"{title}.pptx"
     if mode == "DOC":
         doc = Document()
@@ -40,132 +35,108 @@ def create_files(mode, title, content):
         doc.save(fname)
     else:
         prs = Presentation()
-        slide = prs.slides.add_slide(prs.slide_layouts)
+        slide = prs.slides.add_slide(prs.slide_layouts[0])
         slide.shapes.title.text = title
-        slide.placeholders.text = content
+        slide.placeholders[1].text = content
         prs.save(fname)
     return fname
 
-async def send_to_tg(file_path):
-    if bot and MY_CHAT_ID:
-        try:
-            await bot.send_document(MY_CHAT_ID, FSInputFile(file_path))
-            os.remove(file_path) # Чистим место на Render
-            return True
-        except Exception as e:
-            print(f"Ошибка отправки: {e}")
-    return False
-
 def web_search(query):
-    try:
-        with DDGS() as ddgs:
-            results = [r['body'] for r in ddgs.text(query, max_results=3)]
-            return "\n".join(results)
-    except: return "Поиск временно недоступен."
+    with DDGS() as ddgs:
+        results = [r['body'] for r in ddgs.text(query, max_results=3)]
+        return "\n".join(results)
 
-# --- МОЗГ СТЕЛЫ С ПАМЯТЬЮ ---
-memory = []
+# --- ИНТЕРФЕЙС СТЕЛЫ ---
 
-async def get_stela_ai_response(prompt):
-    global memory
-    system_msg = (
-        "Ты Стела, ИИ-ассистент. Твои команды:\n"
-        "[MUSIC] Артист - Трек\n"
-        "[DOC] Заголовок | Текст\n"
-        "[PPT] Заголовок | Текст\n"
-        "[SEARCH] Запрос\n"
-        "[REMIND] Время | Суть\n"
-        "Отвечай кратко, помни контекст. Если создаешь файл, уведомь об отправке в TG."
-    )
-    
-    memory.append({"role": "user", "content": prompt})
-    if len(memory) > 10: memory.pop(0) # Храним последние 10 реплик
-
-    try:
-        completion = ai_client.chat.completions.create(
-            model="llama-3.1-70b-versatile", # Более мощная модель
-            messages=[{"role": "system", "content": system_msg}] + memory
-        )
-        ans = completion.choices.message.content
-        memory.append({"role": "assistant", "content": ans})
-        return ans
-    except Exception as e: return f"Сбой: {e}"
-
-# --- ИНТЕРФЕЙС FLET ---
 async def main_flet(page: ft.Page):
-    page.title = "Stela Premium OS"
-    page.theme_mode = "dark"
-    page.bgcolor = "#050505"
-    page.padding = 20
+    # Получаем настройки из Supabase
+    user_id = page.route_context.query.get("user_id", ["default"])[0]
     
+    # Загружаем тему (если нет — дефолт)
+    res = supabase.table("stela_users").select("*").eq("user_id", user_id).execute()
+    u_data = res.data[0] if res.data else {"bg_color": "#000000", "accent_color": "cyan"}
+    
+    page.bgcolor = u_data.get("bg_color")
+    accent = u_data.get("accent_color")
+    
+    # Плеер
     audio_player = audio.Audio(src="", autoplay=True)
     page.overlay.append(audio_player)
 
-    status = ft.Text("STELA ONLINE", color="cyan", weight="bold")
+    # Анимированная сфера
     sphere = ft.Container(
-        content=ft.Icon(ft.icons.AUTO_AWESOME, size=80, color="cyan200"),
+        content=ft.Icon(ft.icons.AUTO_AWESOME_MOTION, size=80, color=accent),
         width=160, height=160, shape="circle",
-        gradient=ft.RadialGradient(colors=["#1a237e", "black"]),
-        animate_scale=300,
+        shadow=ft.BoxShadow(blur_radius=50, color=accent),
+        animate=ft.animation.Animation(600, "bounceOut"),
+        animate_scale=ft.animation.Animation(400, "easeInOut"),
     )
-    
-    log_column = ft.Column(scroll="auto", height=200, width=350)
-    input_f = ft.TextField(label="Команда Стеле...", border_color="cyan", on_submit=lambda e: run_stela(e))
 
-    async def run_stela(e):
-        txt = input_f.value
-        if not txt: return
+    chat_log = ft.Column(scroll="auto", height=250)
+    input_f = ft.TextField(label="Введите команду...", border_color=accent, expand=True)
+
+    async def run_logic(e):
+        prompt = input_f.value
+        if not prompt: return
         input_f.value = ""
         sphere.scale = 1.3
-        log_column.controls.append(ft.Text(f"Вы: {txt}", color="white70"))
+        chat_log.controls.append(ft.Text(f"Вы: {prompt}", color="white70"))
         page.update()
 
-        res = await get_stela_ai_response(txt)
+        # Запрос к Llama-3 (Groq)
+        system_msg = "Ты Стела. Команды: [MUSIC] Исполнитель - Трек, [DOC] Заголовок | Текст, [SEARCH] Запрос."
+        completion = ai_client.chat.completions.create(
+            model="llama-3.1-8b-instant",
+            messages=[{"role": "system", "content": system_msg}, {"role": "user", "content": prompt}]
+        )
+        res_ai = completion.choices.message.content
 
-        if "[SEARCH]" in res:
-            q = res.replace("[SEARCH]", "").strip()
-            found = web_search(q)
-            res = await get_stela_ai_response(f"Результат поиска: {found}. Сделай вывод.")
-
-        if "[MUSIC]" in res:
-            q = res.replace("[MUSIC]", "").strip()
-            s = y_client.search(q)
-            if s.tracks:
-                t = s.tracks.results[0]
-                audio_player.src = t.get_download_info(get_direct_links=True)[0].direct_link
-                audio_player.play()
-                res = f"Играет: {t.title}"
+        # Обработка команд
+        if "[SEARCH]" in res_ai:
+            q = res_ai.replace("[SEARCH]", "").strip()
+            data = web_search(q)
+            res_ai = f"Нашла в сети: {data[:200]}..."
         
-        if "[DOC]" in res or "[PPT]" in res:
-            m = "DOC" if "[DOC]" in res else "PPT"
-            p = res.replace(f"[{m}]", "").split("|")
-            fname = create_files(m, p[0].strip(), p[1].strip() if len(p)>1 else "...")
-            sent = await send_to_tg(fname)
-            res = f"📄 Файл {fname} создан и отправлен вам в Telegram!" if sent else "Файл создан, но не отправлен."
+        elif "[MUSIC]" in res_ai:
+            q = res_ai.replace("[MUSIC]", "").strip()
+            search = y_client.search(q)
+            if search.tracks:
+                track = search.tracks.results[0]
+                audio_player.src = track.get_download_info(get_direct_links=True)[0].direct_link
+                audio_player.play()
+                res_ai = f"Слушаем: {track.title}"
 
-        log_column.controls.append(ft.Text(f"Стела: {res}", color="cyan"))
+        elif "[DOC]" in res_ai:
+            parts = res_ai.replace("[DOC]", "").split("|")
+            fname = create_and_send_doc("DOC", parts[0].strip(), parts[1] if len(parts)>1 else "...")
+            res_ai = f"Файл {fname} создан и сохранен!"
+
+        chat_log.controls.append(ft.Text(f"Стела: {res_ai}", color=accent))
         sphere.scale = 1.0
         page.update()
 
-    page.add(
-        ft.Center(sphere),
-        ft.Divider(height=20, color="transparent"),
-        ft.Container(log_column, padding=10, bgcolor="#111111", border_radius=10),
-        input_f,
-        ft.ElevatedButton("ВЫПОЛНИТЬ", on_click=run_stela, width=400, bgcolor="cyan900")
+    # --- ВКЛАДКА НАСТРОЕК ---
+    async def save_settings(e):
+        new_data = {"bg_color": cp_bg.value, "accent_color": cp_acc.value}
+        supabase.table("stela_users").upsert({"user_id": user_id, **new_data}).execute()
+        page.bgcolor = cp_bg.value
+        page.update()
+
+    cp_bg = ft.TextField(label="Цвет фона (HEX)", value=page.bgcolor)
+    cp_acc = ft.TextField(label="Цвет акцента", value=accent)
+
+    # Компоновка вкладок
+    tabs = ft.Tabs(
+        selected_index=0,
+        tabs=[
+            ft.Tab(text="Чат", content=ft.Column([ft.Center(sphere), chat_log, ft.Row([input_f, ft.IconButton(ft.icons.SEND, on_click=run_logic)])])),
+            ft.Tab(text="Вид", content=ft.Column([cp_bg, cp_acc, ft.ElevatedButton("Сохранить", on_click=save_settings)]))
+        ], expand=1
     )
 
-# --- BOT & START ---
-@dp.message(Command("start"))
-async def cmd_start(msg: types.Message):
-    await msg.answer(f"Ваш ID: {msg.from_user.id}\nИспользуйте его в настройках MY_CHAT_ID.")
-    markup = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="STELA OS", web_app=WebAppInfo(url=RENDER_URL))]])
-    await msg.answer("Система готова к работе.", reply_markup=markup)
+    page.add(tabs)
 
-async def main():
-    flet_task = ft.app_async(target=main_flet, view=ft.AppView.WEB_BROWSER, host="0.0.0.0", port=int(os.getenv("PORT", 10000)))
-    bot_task = dp.start_polling(bot)
-    await asyncio.gather(flet_task, bot_task)
-
+# Запуск приложения на Render
 if __name__ == "__main__":
-    asyncio.run(main())
+    port = int(os.getenv("PORT", 10000))
+    ft.app(target=main_flet, view=ft.AppView.WEB_BROWSER, host="0.0.0.0", port=port)
