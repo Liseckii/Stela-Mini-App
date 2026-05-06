@@ -17,7 +17,7 @@ try:
 except Exception as e:
     logging.error(f"Критическая ошибка инициализации: {e}")
 
-# Обработка запросов и на главную, и на /ask
+# Обработка запросов
 @app.post("/")
 @app.post("/ask")
 async def ask(request: Request):
@@ -25,16 +25,13 @@ async def ask(request: Request):
         data = await request.json()
         query = data.get("query", "Привет")
         
-        # Запрос к Llama
-               # Используем новейшую модель Llama 3.1
+        # ЗАПРОС К НОВОЙ МОДЕЛИ (Исправлено)
         completion = ai_client.chat.completions.create(
-            model="llama-3.1-8b-instant", 
+            model="llama-3.1-8b-instant",
             messages=[
                 {"role": "system", "content": "Ты Стела OS. Отвечай кратко."},
                 {"role": "user", "content": query}
             ]
-        )
-
         )
         answer = completion.choices[0].message.content
         music_url = None
@@ -54,10 +51,9 @@ async def ask(request: Request):
         logging.error(f"Ошибка на сервере: {e}")
         return {"answer": f"Ошибка системы: {str(e)}", "music_url": None}
 
-# Хелсчек для браузера
 @app.get("/")
 async def health():
-    return {"status": "online", "ai_ready": os.getenv("GROQ_API_KEY") is not None}
+    return {"status": "online", "model": "llama-3.1-8b-instant"}
 
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 10000))
